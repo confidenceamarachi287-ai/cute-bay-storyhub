@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Confam Story Hub</title>
+    <style>
+        :root {
+            --primary: #6366f1;
+            --success: #10b981;
+            --danger: #ef4444;
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .container { max-width: 800px; width: 100%; }
+        
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--surface);
+            margin-bottom: 30px;
+        }
+
+        .status-badge {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: bold;
+        }
+        .online { background-color: rgba(16, 185, 129, 0.2); color: var(--success); }
+        .offline { background-color: rgba(239, 68, 68, 0.2); color: var(--danger); }
+
+        .story-form {
+            background-color: var(--surface);
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+        }
+
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; color: var(--text-muted); font-size: 0.9rem; }
+        input, textarea {
+            width: 100%;
+            padding: 12px;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            color: white;
+            font-size: 1rem;
+        }
+        input:focus, textarea:focus { border-color: var(--primary); outline: none; }
+
+        button {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            width: 100%;
+        }
+        button:hover { opacity: 0.9; }
+
+        .story-card {
+            background-color: var(--surface);
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            border-left: 4px solid var(--primary);
+        }
+        .story-card h3 { margin-bottom: 10px; color: white; }
+        .story-card p { color: #cbd5e1; line-height: 1.6; white-space: pre-wrap; }
+        .story-meta { margin-top: 10px; font-size: 0.8rem; color: var(--text-muted); display: flex; gap: 15px; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <header>
+            <div>
+                <h1>Naija Story Engine</h1>
+                <p style="color: var(--text-muted);">Write and save drafts anywhere, anytime.</p>
+            </div>
+            <div id="network-status" class="status-badge online">Checking Network...</div>
+        </header>
+
+        <!-- Upload Form -->
+        <div class="story-form">
+            <h2 style="margin-bottom: 15px; font-size: 1.25rem;">Publish New Story</h2>
+            <form id="storyForm">
+                <div class="form-group">
+                    <label for="title">Story Title</label>
+                    <input type="text" id="title" required placeholder="Enter a gripping title...">
+                </div>
+                <div class="form-group">
+                    <label for="content">Write Story</label>
+                    <textarea id="content" rows="6" required placeholder="Once upon a time..."></textarea>
+                </div>
+                <button type="submit">Publish Story</button>
+            </form>
+        </div>
+
+        <!-- Rendered Stories feed -->
+        <h2>Feed Room</h2>
+        <div id="storiesFeed" style="margin-top: 15px;"></div>
+    </div>
+
+    <script>
+        let db;
+        const statusBadge = document.getElementById('network-status');
+        const storyForm = document.getElementById('storyForm');
+        const feed = document.getElementById('storiesFeed');
+
+        // 1. Initialize Database (IndexedDB) for Offline Storage
+        const dbRequest = indexedDB.open('StoryHubDB', 1);
+        
+        dbRequest.onupgradeneeded = (e) => {
+            db = e.target.result;
+            if (!db.objectStoreNames.contains('stories')) {
+                db.createObjectStore('stories', { keyPath: 'id', autoIncrement: true });
+            }
+        };
+
+        dbRequest.onsuccess = (e) => {
+            db = e.target.result;
+            loadLocalStories();
+        };
+
+        // 2. Network Monitoring Status Check
+        function updateNetworkStatus() {
+            if (navigator.onLine) {
+                statusBadge.textContent = "Online Mode";
+                statusBadge.className = "status-badge online";
+                syncDataToServer(); // Run online push mechanism
+            } else {
+                statusBadge.textContent = "Offline Mode";
+                statusBadge.className = "status-badge offline";
+            }
+        }
+        window.addEventListener('online', updateNetworkStatus);
+        window.addEventListener('offline', updateNetworkStatus);
+        updateNetworkStatus();
+
+        // 3. Handle Story Upload Submit Form
+        storyForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const title = document.getElementById('title').value;
+            const content = document.getElementById('content').value;
+            
+            const newStory = {
+                title: title,
+                content: content,
+                timestamp: new Date().toLocaleString(),
+                isSynced: navigator.onLine ? 1 : 0 // Flag to trace online vs offline state
+            };
+
+            // Save straight to browser client engine first
+            const tx = db.transaction('stories', 'readwrite');
+            const store = tx.objectStore('stories');
+            store.add(newStory);
+
+            tx.oncomplete = () => {
+                storyForm.reset();
+                loadLocalStories();
+                
+                if (navigator.onLine) {
+                    alert("Uploaded Online & Saved locally!");
+                } else {
+                    alert("No network! Saved securely offline on your device. It will sync when connection returns.");
+                }
+            };
+        });
+
+        // 4. Render Stories on the DOM Screen
+        function loadLocalStories() {
+            feed.innerHTML = '';
+            const tx = db.transaction('stories', 'readonly');
+            const store = tx.objectStore('stories');
+            
+            store.openCursor().onsuccess = (e) => {
+                const cursor = e.target.result;
+                if (cursor) {
+                    const story = cursor.value;
+                    const card = document.createElement('div');
+                    card.className = 'story-card';
+                    card.innerHTML = `
+                        <h3>${story.title}</h3>
+                        <p>${story.content}</p>
+                        <div class="story-meta">
+                            <span>📅 ${story.timestamp}</span>
+                            <span>${story.isSynced ? '🌐 Synced Online' : '💾 Offline Storage Draft'}</span>
+                        </div>
+                    `;
+                    feed.prepend(card);
+                    cursor.continue();
+                }
+            };
+        }
+
+        // 5. Cloud Reconnection Engine Simulator
+        function syncDataToServer() {
+            if (!db) return;
+            const tx = db.transaction('stories', 'readwrite');
+            const store = tx.objectStore('stories');
+            
+            store.openCursor().onsuccess = (e) => {
+                const cursor = e.target.result;
+                if (cursor) {
+                    if (cursor.value.isSynced === 0) {
+                        // This simulates an API connection point to cloud backends like Firebase/Supabase
+                        console.log(`Syncing "${cursor.value.title}" safely to cloud server...`);
+                        
+                        const updatedData = cursor.value;
+                        updatedData.isSynced = 1;
+                        cursor.update(updatedData);
+                    }
+                    cursor.continue();
+                }
+            };
+            loadLocalStories();
+        }
+    </script>
+</body>
+</html>
